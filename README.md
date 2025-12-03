@@ -1,4 +1,4 @@
-# nextcloud-talk-webhook-bot
+# Nextcloud Talk Webhook Bot
 
 A lightweight FastAPI wrapper that accepts webhook payloads and forwards them to a Nextcloud Talk bot. It is ideal for bridging other systems (CI/CD, monitoring, home automation, etc.) with Nextcloud Talk without having to write custom bot logic.
 
