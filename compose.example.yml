@@ -1,0 +1,10 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8000:80"
+    environment:
+      - NC_URL=<your_nextcloud_url>
+      - TOKEN=<your_nextcloud_token>
+      - SECRET=<your_secret_key>
+    restart: unless-stopped
