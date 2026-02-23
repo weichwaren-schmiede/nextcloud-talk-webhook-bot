@@ -1,6 +1,8 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
+import json
+from urllib.parse import parse_qs
 
 
 class MessageRequest(BaseModel):
@@ -51,19 +53,57 @@ def format_alertmanager_message(webhook: AlertmanagerWebhook) -> str:
 async def send_message(request: Request):
     """Accept simple message or Alertmanager webhook."""
     try:
-        body = await request.json()
-        
+        raw_body = await request.body()
+        content_type = request.headers.get("content-type", "").lower()
+
+        body: Any
+        if "application/json" in content_type:
+            decoded = raw_body.decode("utf-8", errors="replace")
+            try:
+                body = json.loads(decoded or "{}")
+            except json.JSONDecodeError:
+                body = decoded
+        else:
+            decoded = raw_body.decode("utf-8", errors="replace")
+            if decoded.strip().startswith("{") or decoded.strip().startswith("["):
+                try:
+                    body = json.loads(decoded)
+                except json.JSONDecodeError:
+                    body = decoded
+            elif "application/x-www-form-urlencoded" in content_type:
+                form = parse_qs(decoded, keep_blank_values=True)
+                body = {k: v[0] if len(v) == 1 else v for k, v in form.items()}
+            else:
+                body = decoded
+
         # Check if it's an Alertmanager webhook
-        if "alerts" in body:
+        if isinstance(body, dict) and "alerts" in body:
             webhook = AlertmanagerWebhook(**body)
             message = format_alertmanager_message(webhook)
         else:
-            msg_req = MessageRequest(**body)
-            message = msg_req.message
-        
+            if isinstance(body, dict):
+                if "message" in body and isinstance(body["message"], str):
+                    message = body["message"]
+                elif "title" in body and "message" in body:
+                    title = str(body.get("title", "")).strip()
+                    text = str(body.get("message", "")).strip()
+                    message = f"{title}\n{text}".strip()
+                elif "entries" in body and isinstance(body["entries"], list):
+                    entries = [str(entry) for entry in body["entries"]]
+                    message = "\n".join(entries)
+                else:
+                    message = json.dumps(body, ensure_ascii=False)
+            else:
+                message = str(body)
+
         from bot import NextcloudBot
         bot = NextcloudBot()
-        return bot.send_message(message)
-        
+        result = bot.send_message(message)
+        if isinstance(result, dict) and result.get("status") == "error":
+            raise HTTPException(status_code=502, detail=result.get("message", "Unknown bot error"))
+        return result
+
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(status_code=400, detail=str(e))
